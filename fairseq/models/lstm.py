@@ -4,6 +4,11 @@
 # LICENSE file in the root directory of this source tree.
 
 from typing import Dict, List, Optional, Tuple
+import os
+import numpy as np
+import nltk
+from nltk.corpus import wordnet as wn
+# from nltk.corpus
 
 import torch
 import torch.nn as nn
@@ -80,6 +85,10 @@ class LSTMModel(FairseqEncoderDecoderModel):
                             help='dropout probability for decoder input embedding')
         parser.add_argument('--decoder-dropout-out', type=float, metavar='D',
                             help='dropout probability for decoder output')
+        #------------------------
+
+        parser.add_argument('--synset_emb_dim', type=float, metavar='D',
+                            help='synset_id embedding dimension')
         # fmt: on
 
     @classmethod
@@ -87,7 +96,6 @@ class LSTMModel(FairseqEncoderDecoderModel):
         """Build a new model instance."""
         # make sure that all args are properly defaulted (in case there are any new ones)
         base_architecture(args)
-
         if args.encoder_layers != args.decoder_layers:
             raise ValueError("--encoder-layers must match --decoder-layers")
 
@@ -108,12 +116,12 @@ class LSTMModel(FairseqEncoderDecoderModel):
 
         if args.encoder_embed_path:
             pretrained_encoder_embed = load_pretrained_embedding_from_file(
-                args.encoder_embed_path, task.source_dictionary, args.encoder_embed_dim
+                args.encoder_embed_path, task.source_dictionary, args.encoder_embed_dim-args.synset_emb_dim
             )
         else:
             num_embeddings = len(task.source_dictionary)
             pretrained_encoder_embed = Embedding(
-                num_embeddings, args.encoder_embed_dim, task.source_dictionary.pad()
+                num_embeddings, args.encoder_embed_dim-args.synset_emb_dim, task.source_dictionary.pad()
             )
 
         if args.share_all_embeddings:
@@ -166,6 +174,7 @@ class LSTMModel(FairseqEncoderDecoderModel):
             bidirectional=args.encoder_bidirectional,
             pretrained_embed=pretrained_encoder_embed,
             max_source_positions=max_source_positions,
+            synset_emb_dim=args.synset_emb_dim,
         )
         decoder = LSTMDecoder(
             dictionary=task.target_dictionary,
@@ -221,6 +230,7 @@ class LSTMEncoder(FairseqEncoder):
         pretrained_embed=None,
         padding_idx=None,
         max_source_positions=DEFAULT_MAX_SOURCE_POSITIONS,
+        synset_emb_dim=None,
     ):
         super().__init__(dictionary)
         self.num_layers = num_layers
@@ -254,6 +264,42 @@ class LSTMEncoder(FairseqEncoder):
         if bidirectional:
             self.output_units *= 2
 
+        # Có các bước như sau:
+        '''
+        Bước 1: mình đọc được cấu trúc wordset từ file word_set.npy-> tạo được dict với key là word+pos và value là list các synset_id
+        Bước 2: Tạo danh sách các synset_id 
+        Bước 3: là tạo 1 dict ánh xạ synset to index.
+        Bước 4: tạo embedding của synset_id
+        Bước 5: duyệt qua tập các từ, lấy ra danh sách các synset của nó, mặc định chọn synset đầu tiên( improve) 
+        Bước 6: Ánh xạ synset_id của mỗi từ ra index tương ứng. 
+        Bước 7: lấy emb tương ứng của mỗi synset dựa vào embedding đã tạo trước đó.
+        Bước 8: cộng ma trận embedding này vào biến x theo kiểu concat vào.
+        
+        '''
+        # bước 1,2 : đọc thông tin từ file, tạo danh sách các synset_id
+        word_set = np.load('/home/minhkhanh/Desktop/thesis/word_set.npy')
+        synset_ls = set()
+        word_synset = {}
+        for wrd in word_set:
+            params = wrd.split('\t')
+            wrd_pos = params[0].split('_offset')[0] + '\t' + params[2] # word\tpos
+            if wrd_pos not in word_synset:
+                word_synset[wrd_pos] = [params[1]]
+            else:
+                word_synset[wrd_pos].append(params[1])
+            synset_ls.add(params[1])
+
+        self.word_synset = word_synset
+
+        # Bước 3: tạo synset to index
+        self.synset_index = {synset_id: idx for idx, synset_id in enumerate(synset_ls)}
+        # Bước 4: tạo embedding cho synset
+        num_embeddings_ss = len(synset_ls) + 1 # cộng thêm 1set embedding đại diện cho các từ không tim thay
+        self.synset_index['None'] = num_embeddings_ss-1
+        embed_synset = nn.Embedding(num_embeddings_ss, synset_emb_dim)
+        nn.init.uniform_(embed_synset.weight, -0.1, 0.1)
+        self.embed_synset = embed_synset
+
     def forward(
         self,
         src_tokens: Tensor,
@@ -279,12 +325,37 @@ class LSTMEncoder(FairseqEncoder):
                 torch.zeros_like(src_tokens).fill_(self.padding_idx),
                 left_to_right=True,
             )
-
         bsz, seqlen = src_tokens.size()
 
         # embed tokens
         x = self.embed_tokens(src_tokens)
-        x = self.dropout_in_module(x)
+
+        # Xử lí cộng thông tin synset được mã hóa
+        # Bước 5: duyệt qua tập các từ, lấy ra danh sách các synset của nó, mặc định chọn synset đầu tiên( improve)
+        # Bước 6: Ánh xạ synset_id của mỗi từ ra index tương ứng.
+        src_synsets_idx = []
+        for sentence in src_tokens:
+            s =[self.dictionary[idx] for idx in sentence]
+            s_pos= nltk.pos_tag(s)
+            s_pos = [w + '\t' + map_treebankTags_to_wn(pos) for w, pos in s_pos]
+            s_synset_idx = []
+            for s in s_pos:
+                try:
+                    synset_id = self.word_synset[s][0]
+                except:
+                    synset_id = 'None'
+
+                s_synset_idx.append(self.synset_index[synset_id])
+            src_synsets_idx.append(torch.tensor(s_synset_idx))
+
+        # convert to torch tensor
+        src_synsets_idx = torch.stack(src_synsets_idx)
+        # Bước 7: lấy emb tương ứng của mỗi synset dựa vào embedding đã tạo trước đó.
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        x_emb = self.embed_synset(src_synsets_idx.to(device))
+        # Bước 8: cộng ma trận embedding này vào biến x theo kiểu concat vào.
+        x = torch.cat((x, x_emb), 2)
+        x =self.dropout_in_module(x)
 
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
@@ -301,7 +372,7 @@ class LSTMEncoder(FairseqEncoder):
             state_size = self.num_layers, bsz, self.hidden_size
         h0 = x.new_zeros(*state_size)
         c0 = x.new_zeros(*state_size)
-        packed_outs, (final_hiddens, final_cells) = self.lstm(packed_x, (h0, c0))
+        packed_outs, (final_hiddens, final_cells) = self.lstm(packed_x, (h0, c0)) # er
 
         # unpack outputs and apply dropout
         x, _ = nn.utils.rnn.pad_packed_sequence(
@@ -535,7 +606,7 @@ class LSTMDecoder(FairseqIncrementalDecoder):
         assert (
             srclen > 0 or self.attention is None
         ), "attention is not supported if there are no encoder outputs"
-        attn_scores: Optional[Tensor] = (
+        attn_scores = (
             x.new_zeros(srclen, seqlen, bsz) if self.attention is not None else None
         )
         outs = []
@@ -663,6 +734,17 @@ class LSTMDecoder(FairseqIncrementalDecoder):
         self.need_attn = need_attn
 
 
+def map_treebankTags_to_wn(tag):
+    if tag[:2] == 'NN' or tag[:2] == 'CD':
+        return wn.NOUN
+    if tag[:2] == 'JJ' or tag[:2] == 'RP' or tag[:2] == 'PDT' or tag[:2] == 'JJR':
+        return wn.ADJ
+    if tag[:2] == 'VB':
+        return wn.VERB
+    if tag[:2] == 'RB' or tag[:2] == 'IN' or tag[:2] == 'EX':
+        return wn.ADV
+    return 'None'
+
 def Embedding(num_embeddings, embedding_dim, padding_idx):
     m = nn.Embedding(num_embeddings, embedding_dim, padding_idx=padding_idx)
     nn.init.uniform_(m.weight, -0.1, 0.1)
@@ -750,4 +832,15 @@ def lstm_luong_wmt_en_de(args):
     args.decoder_layers = getattr(args, "decoder_layers", 4)
     args.decoder_out_embed_dim = getattr(args, "decoder_out_embed_dim", 1000)
     args.decoder_dropout_out = getattr(args, "decoder_dropout_out", 0)
+    base_architecture(args)
+
+@register_model_architecture("lstm", "lstm_wordnetEmbeddingCustom_512")
+def lstm_khanh_khoa_wordnet_en_vi(args):
+    args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 512)
+    args.encoder_bidirectional = getattr(args, "encoder_bidirectional", True)
+    args.encoder_dropout_out = getattr(args, "encoder_dropout_out", 0)
+    args.decoder_embed_dim = getattr(args, "decoder_embed_dim", 512)
+    args.decoder_out_embed_dim = getattr(args, "decoder_out_embed_dim", 512)
+    # args.encoder_embed_path = getattr(args,"encoder_embed_path" ,"/home/minhkhanh/Downloads/embeddings_infinite.txt" )
+    args.synset_emb_dim = getattr(args, "synset_emb_dim", 128)
     base_architecture(args)
