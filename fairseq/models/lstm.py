@@ -277,40 +277,40 @@ class LSTMEncoder(FairseqEncoder):
         
         '''
         # bước 1,2 : đọc thông tin từ file, tạo danh sách các synset_id
-        # word_set = np.load('/content/drive/MyDrive/train_fairseq/word_set.npy')
-        # # synset_ls = set()
-        # lexnames_id = set()
-        # word_synset = {}
-        # for wrd in word_set:
-        #     params = wrd.split('\t')
-        #     wrd_pos = params[0].split('_offset')[0] + '\t' + params[2] # word\tpos
-        #     if wrd_pos not in word_synset:
-        #         word_synset[wrd_pos] = [(params[1], params[3])] # (offset, lexname)
-        #     else:
-        #         word_synset[wrd_pos].append(params[1], params[3])
-        #     # synset_ls.add(params[1])
-        #     lexnames_id.add(params[3])
-        #
-        # self.word_synset = word_synset
-        #
-        # # Bước 3: tạo synset to index
-        # self.lexname_index = {lex_id: idx for idx, lex_id in enumerate(lexnames_id)}
-        # # Bước 4: tạo embedding cho synset
-        # num_embeddings_lexname = len(lexnames_id) + 1 # cộng thêm 1set embedding đại diện cho các từ không tim thay
-        # self.lexname_index['None'] = num_embeddings_lexname-1
-        # embed_lexname = nn.Embedding(num_embeddings_lexname, synset_emb_dim)
-        # nn.init.uniform_(embed_lexname.weight, -0.1, 0.1)
-        # self.embed_lexname = embed_lexname
+        word_set = np.load('/content/drive/MyDrive/train_fairseq/word_set.npy')
+        # synset_ls = set()
+        lexnames_id = set()
+        word_synsetPlusLexname = {}
+        for wrd in word_set:
+            params = wrd.split('\t')
+            wrd_pos = params[0].split('_offset')[0] + '\t' + params[2] # word\tpos
+            if wrd_pos not in word_synsetPlusLexname:
+                word_synsetPlusLexname[wrd_pos] = [(params[1], params[3])] # (offset, lexname)
+            else:
+                word_synsetPlusLexname[wrd_pos].append((params[1], params[3]))
+            # synset_ls.add(params[1])
+            lexnames_id.add(params[3])
 
-        ls_pos_tag = ['CC', 'CD', 'DT', 'EX', 'FW', 'IN', 'JJ', 'JJR', 'JJS', 'LS', 'MD', 'NN', 'NNS', 'NNP',
-                    'NNPS', 'PDT', 'POS', 'PRP', 'PRP$', 'RB', 'RBR', 'RBS', 'RP', 'TO', 'UH', 'VB', 'VBD', 'VBG',
-                    'VBN', 'VBP', 'VBZ', 'WDT', 'WP', 'WP$', 'WRB']
-        self.pos_tag_index = {p: idx for idx, p in enumerate(ls_pos_tag)}
-        num_embeddings_pos = len(ls_pos_tag) + 1
-        self.pos_tag_index['None'] = num_embeddings_pos-1
-        embed_pos = nn.Embedding(num_embeddings_pos, synset_emb_dim)
-        nn.init.uniform_(embed_pos.weight, -0.1, 0.1)
-        self.embed_pos = embed_pos
+        self.word_synsetPlusLexname = word_synsetPlusLexname
+
+        # Bước 3: tạo synset to index
+        self.lexname_index = {lex_id: idx for idx, lex_id in enumerate(lexnames_id)}
+        # Bước 4: tạo embedding cho synset
+        num_embeddings_lexname = len(lexnames_id) + 1 # cộng thêm 1set embedding đại diện cho các từ không tim thay
+        self.lexname_index['None'] = num_embeddings_lexname-1
+        embed_lexname = nn.Embedding(num_embeddings_lexname, synset_emb_dim)
+        nn.init.uniform_(embed_lexname.weight, -0.1, 0.1)
+        self.embed_lexname = embed_lexname
+
+        # ls_pos_tag = ['CC', 'CD', 'DT', 'EX', 'FW', 'IN', 'JJ', 'JJR', 'JJS', 'LS', 'MD', 'NN', 'NNS', 'NNP',
+        #             'NNPS', 'PDT', 'POS', 'PRP', 'PRP$', 'RB', 'RBR', 'RBS', 'RP', 'TO', 'UH', 'VB', 'VBD', 'VBG',
+        #             'VBN', 'VBP', 'VBZ', 'WDT', 'WP', 'WP$', 'WRB']
+        # self.pos_tag_index = {p: idx for idx, p in enumerate(ls_pos_tag)}
+        # num_embeddings_pos = len(ls_pos_tag) + 1
+        # self.pos_tag_index['None'] = num_embeddings_pos-1
+        # embed_pos = nn.Embedding(num_embeddings_pos, synset_emb_dim)
+        # nn.init.uniform_(embed_pos.weight, -0.1, 0.1)
+        # self.embed_pos = embed_pos
 
     def forward(
         self,
@@ -345,33 +345,27 @@ class LSTMEncoder(FairseqEncoder):
         # Xử lí cộng thông tin synset được mã hóa
         # Bước 5: duyệt qua tập các từ, lấy ra danh sách các synset của nó, mặc định chọn synset đầu tiên( improve)
         # Bước 6: Ánh xạ synset_id của mỗi từ ra index tương ứng.
-        src_pos_idx = []
+        src_lex_idx = []
         # document: https://stackoverflow.com/questions/15388831/what-are-all-possible-pos-tags-of-nltk
         for sentence in src_tokens:
             s =[self.dictionary[idx] for idx in sentence]
             s_pos= nltk.pos_tag(s)
-            # s_pos = [w + '\t' + map_treebankTags_to_wn(pos) for w, pos in s_pos]
-            # s_synset_idx = []
-            # for s in s_pos:
-            #     try:
-            #         synset_id = self.word_synset[s][0]
-            #     except:
-            #         synset_id = 'None'
-            pos_idx = []
-            s_pos_idx = []
-            for wrd_pos in s_pos:
+            wrd_pos = [w + '\t' + map_treebankTags_to_wn(pos) for w, pos in s_pos]
+            s_lex_idx = []
+            for w in wrd_pos:
                 try:
-                    pos_tag = self.pos_tag_index[wrd_pos[1]]
-                except: pos_tag = self.pos_tag_index['None']
-                s_pos_idx.append(pos_tag)
+                    lexname_id = self.word_synsetPlusLexname[w][0][1]
+                except:
+                    lexname_id = 'None'
+                s_lex_idx.append(self.lexname_index[lexname_id])
 
-            src_pos_idx.append(torch.tensor(s_pos_idx))
+            src_lex_idx.append(torch.tensor(s_lex_idx))
 
         # convert to torch tensor
-        src_pos_idx = torch.stack(src_pos_idx)
+        src_pos_idx = torch.stack(src_lex_idx)
         # Bước 7: lấy emb tương ứng của mỗi synset dựa vào embedding đã tạo trước đó.
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        x_emb = self.embed_pos(src_pos_idx.to(device))
+        x_emb = self.embed_lexname(src_pos_idx.to(device))
         # Bước 8: cộng ma trận embedding này vào biến x theo kiểu concat vào.
         x = torch.cat((x, x_emb), 2)
         x =self.dropout_in_module(x)
