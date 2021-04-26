@@ -302,16 +302,6 @@ class LSTMEncoder(FairseqEncoder):
         nn.init.uniform_(embed_lexname.weight, -0.1, 0.1)
         self.embed_lexname = embed_lexname
 
-        # ls_pos_tag = ['CC', 'CD', 'DT', 'EX', 'FW', 'IN', 'JJ', 'JJR', 'JJS', 'LS', 'MD', 'NN', 'NNS', 'NNP',
-        #             'NNPS', 'PDT', 'POS', 'PRP', 'PRP$', 'RB', 'RBR', 'RBS', 'RP', 'TO', 'UH', 'VB', 'VBD', 'VBG',
-        #             'VBN', 'VBP', 'VBZ', 'WDT', 'WP', 'WP$', 'WRB']
-        # self.pos_tag_index = {p: idx for idx, p in enumerate(ls_pos_tag)}
-        # num_embeddings_pos = len(ls_pos_tag) + 1
-        # self.pos_tag_index['None'] = num_embeddings_pos-1
-        # embed_pos = nn.Embedding(num_embeddings_pos, synset_emb_dim)
-        # nn.init.uniform_(embed_pos.weight, -0.1, 0.1)
-        # self.embed_pos = embed_pos
-
     def forward(
         self,
         src_tokens: Tensor,
