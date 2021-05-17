@@ -36,6 +36,7 @@ from .transpose_last import TransposeLast
 from .unfold import unfold1d
 from .transformer_layer import TransformerDecoderLayer, TransformerEncoderLayer
 from .vggblock import VGGBlock
+from .complex_transformer_layer import ComplexTransformerEncoderLayer, ComplexTransformerDecoderLayer
 
 __all__ = [
     "AdaptiveInput",
@@ -72,6 +73,8 @@ __all__ = [
     "TransformerSentenceEncoder",
     "TransformerDecoderLayer",
     "TransformerEncoderLayer",
+    "ComplexTransformerEncoderLayer",
+    "ComplexTransformerDecoderLayer",
     "TransposeLast",
     "VGGBlock",
     "unfold1d",
