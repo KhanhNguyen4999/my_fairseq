@@ -92,8 +92,6 @@ class LSTMModel(FairseqEncoderDecoderModel):
 
         parser.add_argument('--synset_emb_dim', type=float, metavar='D',
                             help='synset_id embedding dimension')
-        parser.add_argument('--cluster_address', type=str, metavar='D',
-        help='just help me to train')
         # fmt: on
 
     @classmethod
@@ -180,7 +178,6 @@ class LSTMModel(FairseqEncoderDecoderModel):
             pretrained_embed=pretrained_encoder_embed,
             max_source_positions=max_source_positions,
             synset_emb_dim=args.synset_emb_dim,
-            # cluster_address = args.cluster_address,
         )
         decoder = LSTMDecoder(
             dictionary=task.target_dictionary,
@@ -237,7 +234,6 @@ class LSTMEncoder(FairseqEncoder):
         padding_idx=None,
         max_source_positions=DEFAULT_MAX_SOURCE_POSITIONS,
         synset_emb_dim=None,
-        cluster_address=None,
     ):
         super().__init__(dictionary)
         self.num_layers = num_layers
@@ -284,11 +280,19 @@ class LSTMEncoder(FairseqEncoder):
         
         '''
         # bước 1,2 : đọc thông tin từ file, tạo danh sách các synset_id
-        word_set = np.load('/content/drive/MyDrive/data/word_set.npy')
+        word_set = np.load('/content/drive/MyDrive/train_fairseq/word_set.npy')
         # Đọc file phân cụm của từng pos lên
+        f_n = open('/content/drive/MyDrive/synset_cluster/cluster_synset_in_pos_n.json', )
+        f_n = json.load(f_n)
 
-        synset_cluster = open('/content/drive/MyDrive/output/cluster/cluster_synset.json')
-        synset_cluster = json.load(synset_cluster)
+        f_a = open('/content/drive/MyDrive/synset_cluster/cluster_synset_in_pos_a.json', )
+        f_a = json.load(f_a)
+
+        f_v = open('/content/drive/MyDrive/synset_cluster/cluster_synset_in_pos_v.json', )
+        f_v = json.load(f_v)
+
+        f_r = open('/content/drive/MyDrive/synset_cluster/cluster_synset_in_pos_r.json', )
+        f_r = json.load(f_r)
 
         word_synset = {}
         for wrd in word_set:
@@ -322,11 +326,15 @@ class LSTMEncoder(FairseqEncoder):
             return synset_pos_to_cluster_id
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        cluster_2_index, embed_cluster = make_Cluster2Index_and_EmbeddingByCluster(synset_cluster)
-        self.cluster2idx = cluster_2_index
-        self.embed_cluster = embed_cluster.to(device)
-        self.synset_to_clusterID = synset_to_cluster_id(synset_cluster)
+
+        self.cluster2idx_per_pos = {}  # dict{'n': {'cluster_0':0, 'cluster_1':1,...}, 'a': {'cluster_0':0, ....
+        self.embed_cluster_per_pos = {} # dict{'n': embedding(n_cluster of pos n, synset_emb_dim), 'a': embedding(n_cluster of pos a, synset_emb_dim) ....
+        self.synset_to_clusterID_per_pos = {} # dict{'n': {'dog.n.01':4, 'cat.n.01':1, ..}, 'a': {'good.a.01':4, 'pretty.a.01':1, ..},
+        for cluster_dict, pos in zip([f_n, f_a, f_v, f_r], ['n', 'a', 'v', 'r']):
+            cluster_2_index, embed_cluster = make_Cluster2Index_and_EmbeddingByCluster(cluster_dict)
+            self.cluster2idx_per_pos[pos] = cluster_2_index
+            self.embed_cluster_per_pos[pos] = embed_cluster.to(device)
+            self.synset_to_clusterID_per_pos[pos] = synset_to_cluster_id(cluster_dict)
 
 
     def forward(
@@ -364,7 +372,7 @@ class LSTMEncoder(FairseqEncoder):
         # Bước 5: duyệt qua tập các từ, lấy ra danh sách các synset của nó, mặc định chọn synset đầu tiên( improve)
         # Bước 6: Ánh xạ synset_id của mỗi từ ra index tương ứng.
         self.to(device)
-        src_emb_idx = []
+        src_emb = []
         # document: https://stackoverflow.com/questions/15388831/what-are-all-possible-pos-tags-of-nltk
         for sentence in src_tokens:
             s =[self.dictionary[idx] for idx in sentence]
@@ -373,22 +381,25 @@ class LSTMEncoder(FairseqEncoder):
             emb_sentence = []
             for w in wrd_pos:
                 pos = w.split('\t')[1]
-                try:
-                    synset_name = self.word_synset[w][0][1] # lấy synset id đầu tiên và ánh xạ ra synset_name
-                    # Ánh xạ từ synset_name ra cluster id
-                    cluster_name = self.synset_to_clusterID[synset_name]
-                except:
-                    cluster_name = 'None'
-                cluster_id = self.cluster2idx[cluster_name]
-                # cluster_id = torch.tensor(cluster_id).to(device)
-                # emb_sentence.append(self.embed_cluster(cluster_id))
-                emb_sentence.append(cluster_id)
+                if pos!='None':
+                    try:
+                        synset_name = self.word_synset[w][0][1] # lấy synset id đầu tiên và ánh xạ ra synset_name
+                        # Ánh xạ từ synset_name ra cluster id
+                        cluster_name = self.synset_to_clusterID_per_pos[pos][synset_name]
+                    except:
+                        cluster_name = 'None'
+                    cluster_id = self.cluster2idx_per_pos[pos][cluster_name]
+                    cluster_id = torch.tensor(cluster_id).to(device)
+                    emb_sentence.append(self.embed_cluster_per_pos[pos](cluster_id))
+                else:
+                    cluster_id = len(self.cluster2idx_per_pos['n'])-1
+                    cluster_id = torch.tensor(cluster_id).to(device)
+                    emb_sentence.append(self.embed_cluster_per_pos['n'](cluster_id))
 
-            src_emb_idx.append(torch.tensor(emb_sentence))
+            src_emb.append(torch.stack(emb_sentence))
 
         # Bước 7: lấy emb tương ứng của mỗi synset dựa vào embedding đã tạo trước đó.
-        src_emb_idx = torch.stack(src_emb_idx)
-        x_emb = self.embed_cluster(src_emb_idx.to(device))
+        x_emb = torch.stack(src_emb).to(device)
         # Bước 8: cộng ma trận embedding này vào biến x theo kiểu concat vào.
         x = torch.cat((x, x_emb), 2)
         x =self.dropout_in_module(x)
@@ -880,79 +891,3 @@ def lstm_khanh_khoa_wordnet_en_vi(args):
     # args.encoder_embed_path = getattr(args,"encoder_embed_path" ,"/home/minhkhanh/Downloads/embeddings_infinite.txt" )
     args.synset_emb_dim = getattr(args, "synset_emb_dim", 128)
     base_architecture(args)
-
-@register_model_architecture("lstm", "lstm_wordnet_cluster_50_5_10_10")
-def lstm_khanh_khoa_wordnet_en_vi(args):
-    args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 512)
-    args.encoder_bidirectional = getattr(args, "encoder_bidirectional", True)
-    args.encoder_dropout_out = getattr(args, "encoder_dropout_out", 0)
-    args.decoder_embed_dim = getattr(args, "decoder_embed_dim", 512)
-    args.decoder_out_embed_dim = getattr(args, "decoder_out_embed_dim", 512)
-    # args.encoder_embed_path = getattr(args,"encoder_embed_path" ,"/home/minhkhanh/Downloads/embeddings_infinite.txt" )
-    args.synset_emb_dim = getattr(args, "synset_emb_dim", 128)
-    args.cluster_address = getattr(args, "cluster_address", '/content/drive/MyDrive/output/cluster/50n_5a_10v_10r')
-    base_architecture(args)
-
-
-@register_model_architecture("lstm", "lstm_wordnet_cluster_100_10_20_20")
-def lstm_khanh_khoa_wordnet_en_vi(args):
-    args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 512)
-    args.encoder_bidirectional = getattr(args, "encoder_bidirectional", True)
-    args.encoder_dropout_out = getattr(args, "encoder_dropout_out", 0)
-    args.decoder_embed_dim = getattr(args, "decoder_embed_dim", 512)
-    args.decoder_out_embed_dim = getattr(args, "decoder_out_embed_dim", 512)
-    # args.encoder_embed_path = getattr(args,"encoder_embed_path" ,"/home/minhkhanh/Downloads/embeddings_infinite.txt" )
-    args.synset_emb_dim = getattr(args, "synset_emb_dim", 128)
-    args.cluster_address = getattr(args, "cluster_address", '/content/drive/MyDrive/output/cluster/100n_10a_20v_20r')
-    base_architecture(args)
-
-
-@register_model_architecture("lstm", "lstm_wordnet_cluster_200_20_40_40")
-def lstm_khanh_khoa_wordnet_en_vi(args):
-    args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 512)
-    args.encoder_bidirectional = getattr(args, "encoder_bidirectional", True)
-    args.encoder_dropout_out = getattr(args, "encoder_dropout_out", 0)
-    args.decoder_embed_dim = getattr(args, "decoder_embed_dim", 512)
-    args.decoder_out_embed_dim = getattr(args, "decoder_out_embed_dim", 512)
-    # args.encoder_embed_path = getattr(args,"encoder_embed_path" ,"/home/minhkhanh/Downloads/embeddings_infinite.txt" )
-    args.synset_emb_dim = getattr(args, "synset_emb_dim", 128)
-    args.cluster_address = getattr(args, "cluster_address", '/content/drive/MyDrive/output/cluster/200n_20a_40v_40r')
-    base_architecture(args)
-
-@register_model_architecture("lstm", "lstm_wordnet_cluster_400_40_80_80")
-def lstm_khanh_khoa_wordnet_en_vi(args):
-    args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 512)
-    args.encoder_bidirectional = getattr(args, "encoder_bidirectional", True)
-    args.encoder_dropout_out = getattr(args, "encoder_dropout_out", 0)
-    args.decoder_embed_dim = getattr(args, "decoder_embed_dim", 512)
-    args.decoder_out_embed_dim = getattr(args, "decoder_out_embed_dim", 512)
-    # args.encoder_embed_path = getattr(args,"encoder_embed_path" ,"/home/minhkhanh/Downloads/embeddings_infinite.txt" )
-    args.synset_emb_dim = getattr(args, "synset_emb_dim", 128)
-    args.cluster_address = getattr(args, "cluster_address", '/content/drive/MyDrive/output/cluster/400n_40a_80v_80r')
-    base_architecture(args)
-
-
-@register_model_architecture("lstm", "lstm_wordnet_cluster_800_80_160_160")
-def lstm_khanh_khoa_wordnet_en_vi(args):
-    args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 512)
-    args.encoder_bidirectional = getattr(args, "encoder_bidirectional", True)
-    args.encoder_dropout_out = getattr(args, "encoder_dropout_out", 0)
-    args.decoder_embed_dim = getattr(args, "decoder_embed_dim", 512)
-    args.decoder_out_embed_dim = getattr(args, "decoder_out_embed_dim", 512)
-    # args.encoder_embed_path = getattr(args,"encoder_embed_path" ,"/home/minhkhanh/Downloads/embeddings_infinite.txt" )
-    args.synset_emb_dim = getattr(args, "synset_emb_dim", 128)
-    args.cluster_address = getattr(args, "cluster_address", '/content/drive/MyDrive/output/cluster/800n_80a_160v_160r')
-    base_architecture(args)
-
-@register_model_architecture("lstm", "lstm_wordnet_cluster_50")
-def lstm_khanh_khoa_wordnet_en_vi(args):
-    args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 512)
-    args.encoder_bidirectional = getattr(args, "encoder_bidirectional", True)
-    args.encoder_dropout_out = getattr(args, "encoder_dropout_out", 0)
-    args.decoder_embed_dim = getattr(args, "decoder_embed_dim", 512)
-    args.decoder_out_embed_dim = getattr(args, "decoder_out_embed_dim", 512)
-    # args.encoder_embed_path = getattr(args,"encoder_embed_path" ,"/home/minhkhanh/Downloads/embeddings_infinite.txt" )
-    args.synset_emb_dim = getattr(args, "synset_emb_dim", 128)
-    # args.cluster_address = getattr(args, "cluster_address", '/content/drive/MyDrive/output/cluster/800n_80a_160v_160r')
-    base_architecture(args)
-

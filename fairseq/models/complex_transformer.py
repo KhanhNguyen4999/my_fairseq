@@ -419,7 +419,7 @@ class TransformerEncoder(FairseqEncoder):
         # embed tokens and positions
         if token_embedding is None:
             token_embedding = self.embed_tokens(src_tokens)
-        x = self.embed_scale * token_embedding
+        x = emb = self.embed_scale * token_embedding
         d_dim = x.shape[2]
 
         max_len= src_tokens.size(1)
@@ -428,12 +428,15 @@ class TransformerEncoder(FairseqEncoder):
                                 d_dim)
 
         angle_rads = torch.from_numpy(angle_rads)  # Sợ không biết có bị lỗi device gì ở đây k
-        cos = torch.cos(angle_rads)
-        sin = torch.sin(angle_rads)
+
+        # Check on device
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        cos = torch.cos(angle_rads).to(device)
+        sin = torch.sin(angle_rads).to(device)
         enc_output_real= x * cos
         enc_output_phase = x * sin
 
-        return enc_output_real, enc_output_phase
+        return enc_output_real, enc_output_phase, emb
 
     def forward(
         self,
@@ -509,7 +512,7 @@ class TransformerEncoder(FairseqEncoder):
         non_padding_mask = src_tokens.ne(self.padding_idx)
         encoder_padding_mask = (~non_padding_mask).unsqueeze(1).expand(-1, len_q, -1)
 
-        enc_output_real, enc_output_phase = self.forward_embedding(src_tokens, token_embeddings) # Tạo embedding ở đây
+        enc_output_real, enc_output_phase, encoder_embedding = self.forward_embedding(src_tokens, token_embeddings) # Tạo embedding ở đây
         enc_output_real = enc_output_real.float()
         enc_output_phase = enc_output_phase.float()
         # B x T x C -> T x B x C
@@ -546,12 +549,12 @@ class TransformerEncoder(FairseqEncoder):
         # TorchScript does not support mixed values so the values are all lists.
         # The empty list is equivalent to None.
         return {
-            "encoder_out": [enc_output_real, enc_output_phase],  # T x B x C
+            "encoder_out": [enc_output_real.permute(1,0,2).contiguous(), enc_output_phase.permute(1,0,2).contiguous()],  # T x B x C
             "encoder_padding_mask": [encoder_padding_mask],  # B x T
-            # "encoder_embedding": [encoder_embedding],  # B x T x C
+            "encoder_embedding": [encoder_embedding],  # B x T x C
             "encoder_states_real": encoder_states_real,  # List[T x B x C]
             "encoder_states_phase": encoder_states_phase,
-            "src_tokens": src_tokens,
+            "src_tokens": [],
             "src_lengths": [],
         }
 
@@ -570,7 +573,7 @@ class TransformerEncoder(FairseqEncoder):
         if len(encoder_out["encoder_out"]) == 0:
             new_encoder_out = []
         else:
-            new_encoder_out = [encoder_out["encoder_out"][0].index_select(1, new_order)]
+            new_encoder_out = [encoder_out["encoder_out"][0].index_select(1, new_order), encoder_out["encoder_out"][1].index_select(1, new_order)]
         if len(encoder_out["encoder_padding_mask"]) == 0:
             new_encoder_padding_mask = []
         else:
@@ -594,16 +597,22 @@ class TransformerEncoder(FairseqEncoder):
         else:
             src_lengths = [(encoder_out["src_lengths"][0]).index_select(0, new_order)]
 
-        encoder_states = encoder_out["encoder_states"]
-        if len(encoder_states) > 0:
-            for idx, state in enumerate(encoder_states):
-                encoder_states[idx] = state.index_select(1, new_order)
+        encoder_states_real = encoder_out["encoder_states_real"]
+        encoder_states_phase = encoder_out["encoder_states_phase"]
+
+        if len(encoder_states_real) > 0:
+            for idx, state in enumerate(encoder_states_real):
+                encoder_states_real[idx] = state.index_select(1, new_order)
+
+            for idx, state in enumerate(encoder_states_phase):
+                encoder_states_phase[idx] = state.index_select(1, new_order)
 
         return {
             "encoder_out": new_encoder_out,  # T x B x C
             "encoder_padding_mask": new_encoder_padding_mask,  # B x T
             "encoder_embedding": new_encoder_embedding,  # B x T x C
-            "encoder_states": encoder_states,  # List[T x B x C]
+            "encoder_states_real": encoder_states_real,  # List[T x B x C]
+            "encoder_states_phase": encoder_states_phase, # List[T x B x C]
             "src_tokens": src_tokens,  # B x T
             "src_lengths": src_lengths,  # B x 1
         }
@@ -881,8 +890,11 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                                     self.embed_dim)
 
             angle_rads = torch.from_numpy(angle_rads)  # Sợ không biết có bị lỗi device gì ở đây k
-            cos = torch.cos(angle_rads)
-            sin = torch.sin(angle_rads)
+
+            # Check on device
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            cos = torch.cos(angle_rads).to(device)
+            sin = torch.sin(angle_rads).to(device)
 
 
         # embed tokens and positions
@@ -891,8 +903,8 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         dec_output_real = (x * cos).float()
         dec_output_phase = (x * sin).float()
         # Lấy ra giá trị encoder real và encoder phase ở layer cuối của encoder phase
-        enc_output_real = encoder_out['encoder_out'][0]
-        enc_output_phase = encoder_out['encoder_out'][1]
+        enc_output_real = encoder_out['encoder_out'][0].permute(1,0,2).contiguous()
+        enc_output_phase = encoder_out['encoder_out'][1].permute(1,0,2).contiguous()
 
         self_attn_padding_mask = prev_output_tokens.eq(self.padding_idx)
         self_attn_padding_mask = self_attn_padding_mask.unsqueeze(1).expand(-1, slen, -1) # biến slen được khai báo ở đầy hàm
@@ -907,14 +919,14 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         # Tạo lớp self_attn_mask
         self_attn_mask = (self_attn_mask + self_attn_padding_mask).gt(0)
         # Tạo lớp enc_dec_attn_mask
-        dec_enc_attn_mask = encoder_out['src_tokens'].eq(self.padding_idx)
+        dec_enc_attn_mask = encoder_out['encoder_padding_mask'][0][:, 0, :]
         dec_enc_attn_mask = dec_enc_attn_mask.unsqueeze(1).expand(-1, slen, -1)
 
         # non padding mask
         non_padding_mask = prev_output_tokens.ne(self.padding_idx).unsqueeze(-1).float()
         for idx, layer in enumerate(self.layers):
 
-            dec_output_real, dec_output_phase = layer(
+            dec_output_real, dec_output_phase, attn = layer(
                 dec_output_real,
                 dec_output_phase,
                 enc_output_real,
@@ -926,7 +938,10 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             inner_states_real.append(dec_output_real)
             inner_states_phase.append(dec_output_phase)
 
-        return dec_output_real, dec_output_phase, {"inner_states_real": inner_states_real, "inner_states_phase": inner_states_phase}
+        _, len_tgt, len_src = dec_enc_attn_mask.shape
+        attn = attn.view(-1, bs, len_tgt, len_src)
+        attn = attn.mean(dim=0)
+        return dec_output_real, dec_output_phase, {"attn": attn, "inner_states_real": inner_states_real, "inner_states_phase": inner_states_phase}
 
     def output_layer(self, features):
         """Project features to the vocabulary size."""

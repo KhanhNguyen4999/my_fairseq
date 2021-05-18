@@ -372,7 +372,7 @@ class TranslationTask(FairseqTask):
             self.tokenizer = encoders.build_tokenizer(
                 Namespace(tokenizer=self.cfg.eval_bleu_detok, **detok_args)
             )
-
+            self.cfg.eval_bleu_args = '{"bleu":5}'
             gen_args = json.loads(self.cfg.eval_bleu_args)
             self.sequence_generator = self.build_generator(
                 [model], Namespace(**gen_args)

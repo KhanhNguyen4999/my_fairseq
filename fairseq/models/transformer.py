@@ -210,7 +210,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
         # fmt: on
 
     @classmethod
-    def build_model(cls, args, task):
+    def build_model(cls, args, task):           # cls là cái gì ta ơi
         """Build a new model instance."""
 
         # make sure all arguments are present in older models
@@ -247,6 +247,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
             decoder_embed_tokens = encoder_embed_tokens
             args.share_decoder_input_output_embed = True
         else:
+            # Load embedding lên ở đây nè, đưa đường dẫn vào load lên y như LSTM thôi.
             encoder_embed_tokens = cls.build_embedding(
                 args, src_dict, args.encoder_embed_dim, args.encoder_embed_path
             )
@@ -255,7 +256,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
             )
         if getattr(args, "offload_activations", False):
             args.checkpoint_activations = True  # offloading implies checkpointing
-        encoder = cls.build_encoder(args, src_dict, encoder_embed_tokens)
+        encoder = cls.build_encoder(args, src_dict, encoder_embed_tokens)                              # Tạo ra encoder và decoder ở đây rồi dùng sao ta
         decoder = cls.build_decoder(args, tgt_dict, decoder_embed_tokens)
         if not args.share_all_embeddings:
             min_params_to_wrap = getattr(
@@ -264,7 +265,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
             # fsdp_wrap is a no-op when --ddp-backend != fully_sharded
             encoder = fsdp_wrap(encoder, min_num_params=min_params_to_wrap)
             decoder = fsdp_wrap(decoder, min_num_params=min_params_to_wrap)
-        return cls(args, encoder, decoder)
+        return cls(args, encoder, decoder)  # Phái nó gọi lại hàm khởi tạo mặc định không ta
 
     @classmethod
     def build_embedding(cls, args, dictionary, embed_dim, path=None):
@@ -321,6 +322,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
             src_lengths=src_lengths,
             return_all_hiddens=return_all_hiddens,
         )
+        # Làm sao mà mình phải trả ra được đúng output cấu hình ở đây nha
         return decoder_out
 
     # Since get_normalized_probs is in the Fairseq Model which is not scriptable,
@@ -368,7 +370,7 @@ class TransformerEncoder(FairseqEncoder):
 
         self.embed_positions = (
             PositionalEmbedding(
-                args.max_source_positions,
+                args.max_source_positions,  # Ở đây nó khởi tạo câu dài nhất cho mình luôn rồi
                 embed_dim,
                 self.padding_idx,
                 learned=args.encoder_learned_pos,
@@ -391,6 +393,7 @@ class TransformerEncoder(FairseqEncoder):
         else:
             self.quant_noise = None
 
+        # khởi tạo số lớp encoder_layer trong phase encoder
         if self.encoder_layerdrop > 0.0:
             self.layers = LayerDropModuleList(p=self.encoder_layerdrop)
         else:
@@ -405,7 +408,7 @@ class TransformerEncoder(FairseqEncoder):
         else:
             self.layer_norm = None
 
-    def build_encoder_layer(self, args):
+    def build_encoder_layer(self, args): # Cái này là encoder layer á, theo mặc định là cần 8 encoder layer trong phase encoder
         layer = TransformerEncoderLayer(args)
         checkpoint = getattr(args, "checkpoint_activations", False)
         if checkpoint:
@@ -417,7 +420,7 @@ class TransformerEncoder(FairseqEncoder):
             getattr(args, "min_params_to_wrap", DEFAULT_MIN_PARAMS_TO_WRAP)
             if not checkpoint else 0
         )
-        layer = fsdp_wrap(layer, min_num_params=min_params_to_wrap)
+        layer = fsdp_wrap(layer, min_num_params=min_params_to_wrap)         # Cái hàm này là gì đây ??????????
         return layer
 
     def forward_embedding(
@@ -506,8 +509,9 @@ class TransformerEncoder(FairseqEncoder):
                   Only populated if *return_all_hiddens* is True.
         """
         # compute padding mask
-        encoder_padding_mask = src_tokens.eq(self.padding_idx)
-        has_pads = (src_tokens.device.type == "xla" or encoder_padding_mask.any())
+
+        encoder_padding_mask = src_tokens.eq(self.padding_idx)         # (****)
+        has_pads = (src_tokens.device.type == "xla" or encoder_padding_mask.any())  # giá trị false
 
         x, encoder_embedding = self.forward_embedding(src_tokens, token_embeddings)
 
@@ -515,12 +519,12 @@ class TransformerEncoder(FairseqEncoder):
         if has_pads:
             x = x * (1 - encoder_padding_mask.unsqueeze(-1).type_as(x))
 
-        # B x T x C -> T x B x C
+        # B x T x C -> T x B x C (4, 14, 512) batchsize x maxlen x dimension -> maxlen x batchsize x dimension
         x = x.transpose(0, 1)
 
         encoder_states = []
 
-        if return_all_hiddens:
+        if return_all_hiddens: # true
             encoder_states.append(x)
 
         # encoder layers
@@ -690,7 +694,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             if embed_dim != input_embed_dim
             else None
         )
-        self.embed_positions = (
+        self.embed_positions = (                                #(**************)
             PositionalEmbedding(
                 self.max_target_positions,
                 embed_dim,
@@ -906,7 +910,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 positions = positions[:, -1:]
 
         # embed tokens and positions
-        x = self.embed_scale * self.embed_tokens(prev_output_tokens)
+        x = self.embed_scale * self.embed_tokens(prev_output_tokens)        #(**************)
 
         if self.quant_noise is not None:
             x = self.quant_noise(x)
@@ -925,9 +929,10 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
 
+        #  Tạo mask ở đây nè
         self_attn_padding_mask: Optional[Tensor] = None
-        if self.cross_self_attention or prev_output_tokens.eq(self.padding_idx).any():
-            self_attn_padding_mask = prev_output_tokens.eq(self.padding_idx)
+        if self.cross_self_attention or prev_output_tokens.eq(self.padding_idx).any():    # Cái này là tương đương với get_attn_key_pad_mask
+            self_attn_padding_mask = prev_output_tokens.eq(self.padding_idx)            # Lớp mask encoder padding mask của ngôn ngữ đích
 
         # decoder layers
         attn: Optional[Tensor] = None
@@ -941,10 +946,10 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             x, layer_attn, _ = layer(
                 x,
                 enc,
-                padding_mask,
+                padding_mask,                 # Lớp mask encoder padding mask của ngôn ngữ nguồn
                 incremental_state,
-                self_attn_mask=self_attn_mask,
-                self_attn_padding_mask=self_attn_padding_mask,
+                self_attn_mask=self_attn_mask,     # lop mask de giup chi doc thong tn cua cac tu o truoc tu hien tai
+                self_attn_padding_mask=self_attn_padding_mask, # Lớp mask encoder padding mask của ngôn ngữ đích
                 need_attn=bool((idx == alignment_layer)),
                 need_head_weights=bool((idx == alignment_layer)),
             )
@@ -984,7 +989,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             return self.max_target_positions
         return min(self.max_target_positions, self.embed_positions.max_positions)
 
-    def buffered_future_mask(self, tensor):
+    def buffered_future_mask(self, tensor):                                 #(*****) Cái hàm này tương ứng với get_subsequent_mask nè
         dim = tensor.size(0)
         # self._future_mask.device != tensor.device is not working in TorchScript. This is a workaround.
         if (

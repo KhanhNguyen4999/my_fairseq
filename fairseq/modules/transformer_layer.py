@@ -14,6 +14,7 @@ from fairseq.modules.quant_noise import quant_noise
 from torch import Tensor
 
 
+
 class TransformerEncoderLayer(nn.Module):
     """Encoder layer block.
 
@@ -124,12 +125,13 @@ class TransformerEncoderLayer(nn.Module):
         # Note that we cannot use -inf here, because at some edge cases,
         # the attention weight (before softmax) for some padded element in query
         # will become -inf, which results in NaN in model parameters
-        if attn_mask is not None:
+        if attn_mask is not None: #None
             attn_mask = attn_mask.masked_fill(attn_mask.to(torch.bool), -1e8)
 
         residual = x
-        if self.normalize_before:
+        if self.normalize_before: #False
             x = self.self_attn_layer_norm(x)
+        # Giá trị attn_mask là none
         x, _ = self.self_attn(
             query=x,
             key=x,
@@ -138,11 +140,13 @@ class TransformerEncoderLayer(nn.Module):
             need_weights=False,
             attn_mask=attn_mask,
         )
+        # shape (max_len, batchsize, dim)
         x = self.dropout_module(x)
         x = self.residual_connection(x, residual)
         if not self.normalize_before:
             x = self.self_attn_layer_norm(x)
 
+        # VÃi cái tg feedforward nó không tách ra mà viết như vậy luôn
         residual = x
         if self.normalize_before:
             x = self.final_layer_norm(x)
@@ -319,6 +323,7 @@ class TransformerDecoderLayer(nn.Module):
             assert incremental_state is not None
             self.self_attn._set_input_buffer(incremental_state, saved_state)
         _self_attn_input_buffer = self.self_attn._get_input_buffer(incremental_state)
+
         if self.cross_self_attention and not (
             incremental_state is not None
             and _self_attn_input_buffer is not None
@@ -382,7 +387,7 @@ class TransformerDecoderLayer(nn.Module):
                 need_weights=need_attn or (not self.training and self.need_attn),
                 need_head_weights=need_head_weights,
             )
-            x = self.dropout_module(x)
+            x = self.dropout_module(x)  # (11, 4, 512) chiều dài theo chiều bên tgt
             x = self.residual_connection(x, residual)
             if not self.normalize_before:
                 x = self.encoder_attn_layer_norm(x)

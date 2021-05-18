@@ -191,7 +191,7 @@ class MultiHeadAttention(nn.Module):
         output_phase = self.dropout(self.fc(output_phase))
         output_phase = self.layer_norm(output_phase + residual_phase)
 
-        return output_real, output_phase
+        return output_real, output_phase, attn
 
 class ComplexTransformerEncoderLayer(nn.Module):
     """Encoder layer block.
@@ -293,7 +293,7 @@ class ComplexTransformerEncoderLayer(nn.Module):
         if attn_mask is not None:
             attn_mask = attn_mask.masked_fill(attn_mask.to(torch.bool), -1e8)
 
-        enc_output_real, enc_output_phase = self.self_attn(
+        enc_output_real, enc_output_phase, _ = self.self_attn(
             q_real=enc_output_real,
             k_real=enc_output_real,
             v_real=enc_output_real,
@@ -432,7 +432,7 @@ class ComplexTransformerDecoderLayer(nn.Module):
         if need_head_weights:
             need_attn = True
 
-        dec_output_real, dec_output_phase = self.self_attn(
+        dec_output_real, dec_output_phase, _ = self.self_attn(
             q_real=dec_input_real,
             k_real=dec_input_real,
             v_real=dec_input_real,
@@ -445,7 +445,7 @@ class ComplexTransformerDecoderLayer(nn.Module):
         dec_output_real = dec_output_real * non_padding_mask
         dec_output_phase = dec_output_phase * non_padding_mask
 
-        dec_output_real, dec_output_phase = self.encoder_attn(
+        dec_output_real, dec_output_phase, attn = self.encoder_attn(
             dec_output_real,
             enc_output_real,
             enc_output_real,
@@ -462,7 +462,7 @@ class ComplexTransformerDecoderLayer(nn.Module):
         dec_output_real = dec_output_real * non_padding_mask
         dec_output_phase = dec_output_phase * non_padding_mask
 
-        return dec_output_real,dec_output_phase
+        return dec_output_real,dec_output_phase, attn
 
     def make_generation_fast_(self, need_attn: bool = False, **kwargs):
         self.need_attn = need_attn
