@@ -212,8 +212,6 @@ class ComplexTransformerEncoderLayer(nn.Module):
         super().__init__()
         self.args = args
         self.embed_dim = args.encoder_embed_dim
-        self.quant_noise = getattr(args, 'quant_noise_pq', 0)
-        self.quant_noise_block_size = getattr(args, 'quant_noise_pq_block_size', 8) or 8
 
         self.self_attn = self.build_self_attention(self.embed_dim, args)  # Chỗ cần sửa
 
@@ -262,13 +260,12 @@ class ComplexTransformerEncoderLayer(nn.Module):
                     state_dict["{}.{}.{}".format(name, new, m)] = state_dict[k]
                     del state_dict[k]
 
-    # x là real, còn img là phần ảo -> hạn chế thay đổi code nhất có thể ở thời điểm hiện tại
+
     def forward(self,
                 enc_output_real,
                 enc_output_phase,
                 encoder_padding_mask: Optional[Tensor],
                 non_padding_mask,
-                attn_mask: Optional[Tensor] = None,
                 ):
         """
         Args:
@@ -290,8 +287,6 @@ class ComplexTransformerEncoderLayer(nn.Module):
         # Note that we cannot use -inf here, because at some edge cases,
         # the attention weight (before softmax) for some padded element in query
         # will become -inf, which results in NaN in model parameters
-        if attn_mask is not None:
-            attn_mask = attn_mask.masked_fill(attn_mask.to(torch.bool), -1e8)
 
         enc_output_real, enc_output_phase, _ = self.self_attn(
             q_real=enc_output_real,
@@ -340,29 +335,11 @@ class ComplexTransformerDecoderLayer(nn.Module):
         self.dropout_module = FairseqDropout(
             args.dropout, module_name=self.__class__.__name__
         )
-        self.quant_noise = getattr(args, "quant_noise_pq", 0)
-        self.quant_noise_block_size = getattr(args, "quant_noise_pq_block_size", 8)
-
-        self.cross_self_attention = getattr(args, "cross_self_attention", False)
 
         self.self_attn = self.build_self_attention(
             self.embed_dim,
             args
         )
-
-        self.activation_fn = utils.get_activation_fn(
-            activation=str(args.activation_fn)
-            if getattr(args, "activation_fn", None) is not None
-            else "relu"
-        )
-        activation_dropout_p = getattr(args, "activation_dropout", 0) or 0
-        if activation_dropout_p == 0:
-            # for backwards compatibility with models that use args.relu_dropout
-            activation_dropout_p = getattr(args, "relu_dropout", 0) or 0
-        self.activation_dropout_module = FairseqDropout(
-            float(activation_dropout_p), module_name=self.__class__.__name__
-        )
-        self.normalize_before = args.decoder_normalize_before
 
         # use layerNorm rather than FusedLayerNorm for exporting.
         # char_inputs can be used to determint this.

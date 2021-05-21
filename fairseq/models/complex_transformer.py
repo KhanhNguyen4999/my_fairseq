@@ -217,16 +217,6 @@ class TransformerModel(FairseqEncoderDecoderModel):
         # make sure all arguments are present in older models
         base_architecture(args)
 
-        if args.encoder_layers_to_keep:
-            args.encoder_layers = len(args.encoder_layers_to_keep.split(","))
-        if args.decoder_layers_to_keep:
-            args.decoder_layers = len(args.decoder_layers_to_keep.split(","))
-
-        if getattr(args, "max_source_positions", None) is None:
-            args.max_source_positions = DEFAULT_MAX_SOURCE_POSITIONS
-        if getattr(args, "max_target_positions", None) is None:
-            args.max_target_positions = DEFAULT_MAX_TARGET_POSITIONS
-
         src_dict, tgt_dict = task.source_dictionary, task.target_dictionary
 
         if args.share_all_embeddings:
@@ -354,9 +344,9 @@ class TransformerEncoder(FairseqEncoder):
         super().__init__(dictionary)
         self.register_buffer("version", torch.Tensor([3]))
 
-        self.dropout_module = FairseqDropout(
-            args.dropout, module_name=self.__class__.__name__
-        )
+        # self.dropout_module = FairseqDropout(
+        #     args.dropout, module_name=self.__class__.__name__
+        # )
         self.encoder_layerdrop = args.encoder_layerdrop
 
         embed_dim = embed_tokens.embedding_dim
@@ -365,23 +355,21 @@ class TransformerEncoder(FairseqEncoder):
 
         self.embed_tokens = embed_tokens
 
-        self.embed_scale = 1.0 if args.no_scale_embedding else math.sqrt(embed_dim)
-
         self.embed_positions = None
 
-        if getattr(args, "layernorm_embedding", False):
-            self.layernorm_embedding = LayerNorm(embed_dim)
-        else:
-            self.layernorm_embedding = None
-
-        if not args.adaptive_input and args.quant_noise_pq > 0:
-            self.quant_noise = apply_quant_noise_(
-                nn.Linear(embed_dim, embed_dim, bias=False),
-                args.quant_noise_pq,
-                args.quant_noise_pq_block_size,
-            )
-        else:
-            self.quant_noise = None
+        # if getattr(args, "layernorm_embedding", False):
+        #     self.layernorm_embedding = LayerNorm(embed_dim)
+        # else:
+        #     self.layernorm_embedding = None
+        #
+        # if not args.adaptive_input and args.quant_noise_pq > 0:
+        #     self.quant_noise = apply_quant_noise_(
+        #         nn.Linear(embed_dim, embed_dim, bias=False),
+        #         args.quant_noise_pq,
+        #         args.quant_noise_pq_block_size,
+        #     )
+        # else:
+        #     self.quant_noise = None
 
         # khởi tạo số lớp encoder_layer trong phase encoder
         if self.encoder_layerdrop > 0.0:
@@ -393,10 +381,6 @@ class TransformerEncoder(FairseqEncoder):
         )
         self.num_layers = len(self.layers)
 
-        if args.encoder_normalize_before:
-            self.layer_norm = LayerNorm(embed_dim)
-        else:
-            self.layer_norm = None
 
     def build_encoder_layer(self, args): # Cái này là encoder layer á, theo mặc định là cần 8 encoder layer trong phase encoder
         layer = ComplexTransformerEncoderLayer(args)
@@ -419,7 +403,7 @@ class TransformerEncoder(FairseqEncoder):
         # embed tokens and positions
         if token_embedding is None:
             token_embedding = self.embed_tokens(src_tokens)
-        x = emb = self.embed_scale * token_embedding
+        x = token_embedding
         d_dim = x.shape[2]
 
         max_len= src_tokens.size(1)
@@ -436,7 +420,7 @@ class TransformerEncoder(FairseqEncoder):
         enc_output_real= x * cos
         enc_output_phase = x * sin
 
-        return enc_output_real, enc_output_phase, emb
+        return enc_output_real, enc_output_phase, token_embedding
 
     def forward(
         self,
@@ -537,12 +521,8 @@ class TransformerEncoder(FairseqEncoder):
             )
             if return_all_hiddens:
                 assert encoder_states_real is not None
-                encoder_states_real.append(enc_output_real)
+                encoder_states_real.append(enc_output_real.permute(1,0,2).contiguous())
                 encoder_states_phase.append(enc_output_phase)
-
-        if self.layer_norm is not None:
-            enc_output_real = self.layer_norm(enc_output_real)
-            enc_output_phase = self.layer_norm(enc_output_phase)
 
         # The Pytorch Mobile lite interpreter does not supports returning NamedTuple in
         # `forward` so we use a dictionary instead.
@@ -552,8 +532,7 @@ class TransformerEncoder(FairseqEncoder):
             "encoder_out": [enc_output_real.permute(1,0,2).contiguous(), enc_output_phase.permute(1,0,2).contiguous()],  # T x B x C
             "encoder_padding_mask": [encoder_padding_mask],  # B x T
             "encoder_embedding": [encoder_embedding],  # B x T x C
-            "encoder_states_real": encoder_states_real,  # List[T x B x C]
-            "encoder_states_phase": encoder_states_phase,
+            "encoder_states": encoder_states_real,  # List[T x B x C]
             "src_tokens": [],
             "src_lengths": [],
         }
@@ -597,22 +576,17 @@ class TransformerEncoder(FairseqEncoder):
         else:
             src_lengths = [(encoder_out["src_lengths"][0]).index_select(0, new_order)]
 
-        encoder_states_real = encoder_out["encoder_states_real"]
-        encoder_states_phase = encoder_out["encoder_states_phase"]
+        encoder_states_real = encoder_out["encoder_states"]
 
         if len(encoder_states_real) > 0:
             for idx, state in enumerate(encoder_states_real):
                 encoder_states_real[idx] = state.index_select(1, new_order)
 
-            for idx, state in enumerate(encoder_states_phase):
-                encoder_states_phase[idx] = state.index_select(1, new_order)
-
         return {
             "encoder_out": new_encoder_out,  # T x B x C
             "encoder_padding_mask": new_encoder_padding_mask,  # B x T
             "encoder_embedding": new_encoder_embedding,  # B x T x C
-            "encoder_states_real": encoder_states_real,  # List[T x B x C]
-            "encoder_states_phase": encoder_states_phase, # List[T x B x C]
+            "encoder_states": encoder_states_real,  # List[T x B x C]
             "src_tokens": src_tokens,  # B x T
             "src_lengths": src_lengths,  # B x 1
         }
@@ -690,22 +664,15 @@ class TransformerDecoder(FairseqIncrementalDecoder):
 
         self.embed_tokens = embed_tokens
 
-        self.embed_scale = 1.0 if args.no_scale_embedding else math.sqrt(embed_dim)
+        # if not args.adaptive_input and args.quant_noise_pq > 0:
+        #     self.quant_noise = apply_quant_noise_(
+        #         nn.Linear(embed_dim, embed_dim, bias=False),
+        #         args.quant_noise_pq,
+        #         args.quant_noise_pq_block_size,
+        #     )
+        # else:
+        #     self.quant_noise = None
 
-        if not args.adaptive_input and args.quant_noise_pq > 0:
-            self.quant_noise = apply_quant_noise_(
-                nn.Linear(embed_dim, embed_dim, bias=False),
-                args.quant_noise_pq,
-                args.quant_noise_pq_block_size,
-            )
-        else:
-            self.quant_noise = None
-
-        self.project_in_dim = (
-            Linear(input_embed_dim, embed_dim, bias=False)
-            if embed_dim != input_embed_dim
-            else None
-        )
         self.embed_positions = (
             PositionalEmbedding(
                 self.max_target_positions,
@@ -716,13 +683,6 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             if not args.no_token_positional_embeddings
             else None
         )
-
-        if getattr(args, "layernorm_embedding", False):
-            self.layernorm_embedding = LayerNorm(embed_dim)
-        else:
-            self.layernorm_embedding = None
-
-        self.cross_self_attention = getattr(args, "cross_self_attention", False)
 
         if self.decoder_layerdrop > 0.0:
             self.layers = LayerDropModuleList(p=self.decoder_layerdrop)
@@ -736,20 +696,6 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         )
         self.num_layers = len(self.layers)
 
-        if args.decoder_normalize_before and not getattr(
-            args, "no_decoder_final_norm", False
-        ):
-            self.layer_norm = LayerNorm(embed_dim)
-        else:
-            self.layer_norm = None
-
-        self.project_out_dim = (
-            Linear(embed_dim, self.output_embed_dim, bias=False)
-            if embed_dim != self.output_embed_dim and not args.tie_adaptive_weights
-            else None
-        )
-
-        self.adaptive_softmax = None
         self.output_projection = output_projection
         if self.output_projection is None:
             self.build_output_projection(args, dictionary, embed_tokens)
@@ -898,7 +844,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
 
 
         # embed tokens and positions
-        x = self.embed_scale * self.embed_tokens(prev_output_tokens)
+        x = self.embed_tokens(prev_output_tokens)
 
         dec_output_real = (x * cos).float()
         dec_output_phase = (x * sin).float()
@@ -935,13 +881,13 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 dec_enc_attn_mask=dec_enc_attn_mask,
                 non_padding_mask=non_padding_mask,
             )
-            inner_states_real.append(dec_output_real)
+            inner_states_real.append(dec_output_real.permute(1,0,2).contiguous())
             inner_states_phase.append(dec_output_phase)
 
         _, len_tgt, len_src = dec_enc_attn_mask.shape
         attn = attn.view(-1, bs, len_tgt, len_src)
         attn = attn.mean(dim=0)
-        return dec_output_real, dec_output_phase, {"attn": attn, "inner_states_real": inner_states_real, "inner_states_phase": inner_states_phase}
+        return dec_output_real, dec_output_phase, {"attn": attn, "inner_states": inner_states_real}
 
     def output_layer(self, features):
         """Project features to the vocabulary size."""
