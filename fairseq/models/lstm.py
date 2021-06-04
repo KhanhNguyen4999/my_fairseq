@@ -298,7 +298,7 @@ class LSTMEncoder(FairseqEncoder):
         word_synset = {}
         for wrd in word_set:
             params = wrd.split('\t')
-            wrd_pos = params[0].split('_offset')[0] + '\t' + params[2] # word\tpos
+            wrd_pos = params[0].split('_offset')[0].lower() + '\t' + params[2] # word\tpos
             synset_name = wn.synset_from_pos_and_offset(params[2], int(params[1]))  # find by pos and offset
             synset_name = str(synset_name)[8:-2]
             if wrd_pos not in word_synset:
