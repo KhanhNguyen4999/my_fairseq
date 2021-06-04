@@ -382,7 +382,7 @@ class LSTMEncoder(FairseqEncoder):
         for sentence in src_tokens:
             s =[self.dictionary[idx] for idx in sentence]
             s_pos= nltk.pos_tag(s)
-            wrd_pos = [self.wnl(w) + '\t' + map_treebankTags_to_wn(pos) for w, pos in s_pos]
+            wrd_pos = [self.wnl.lemmatize(w) + '\t' + map_treebankTags_to_wn(pos) for w, pos in s_pos]
             emb_sentence = []
             for w in wrd_pos:
                 pos = w.split('\t')[1]
@@ -895,4 +895,16 @@ def lstm_khanh_khoa_wordnet_en_vi(args):
     args.decoder_out_embed_dim = getattr(args, "decoder_out_embed_dim", 512)
     # args.encoder_embed_path = getattr(args,"encoder_embed_path" ,"/home/minhkhanh/Downloads/embeddings_infinite.txt" )
     args.synset_emb_dim = getattr(args, "synset_emb_dim", 128)
+    base_architecture(args)
+
+@register_model_architecture("lstm", "lstm_wordnet_cluster_200_20_40_40_fasttext")
+def lstm_khanh_khoa_wordnet_en_vi(args):
+    args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 512)
+    args.encoder_bidirectional = getattr(args, "encoder_bidirectional", True)
+    args.encoder_dropout_out = getattr(args, "encoder_dropout_out", 0)
+    args.decoder_embed_dim = getattr(args, "decoder_embed_dim", 512)
+    args.decoder_out_embed_dim = getattr(args, "decoder_out_embed_dim", 512)
+    # args.encoder_embed_path = getattr(args,"encoder_embed_path" ,"/home/minhkhanh/Downloads/embeddings_infinite.txt" )
+    args.synset_emb_dim = getattr(args, "synset_emb_dim", 128)
+    args.cluster_address = getattr(args, "cluster_address", '/content/drive/MyDrive/output/cluster/200n_20a_40v_40r_fasttext')
     base_architecture(args)
