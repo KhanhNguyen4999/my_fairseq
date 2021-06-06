@@ -11,7 +11,7 @@ nltk.download('wordnet')
 from nltk.corpus import wordnet as wn
 # from nltk.corpus
 import json
-
+from nltk.stem import WordNetLemmatizer
 
 import torch
 import torch.nn as nn
@@ -293,7 +293,7 @@ class LSTMEncoder(FairseqEncoder):
         word_synset = {}
         for wrd in word_set:
             params = wrd.split('\t')
-            wrd_pos = params[0].split('_offset')[0] + '\t' + params[2] # word\tpos
+            wrd_pos = params[0].split('_offset')[0].lower() + '\t' + params[2] # word\tpos
             synset_name = wn.synset_from_pos_and_offset(params[2], int(params[1]))  # find by pos and offset
             synset_name = str(synset_name)[8:-2]
             if wrd_pos not in word_synset:
@@ -327,6 +327,8 @@ class LSTMEncoder(FairseqEncoder):
         self.cluster2idx = cluster_2_index
         self.embed_cluster = embed_cluster.to(device)
         self.synset_to_clusterID = synset_to_cluster_id(synset_cluster)
+        
+        self.wnl = WordNetLemmatizer()
 
 
     def forward(
@@ -369,7 +371,7 @@ class LSTMEncoder(FairseqEncoder):
         for sentence in src_tokens:
             s =[self.dictionary[idx] for idx in sentence]
             s_pos= nltk.pos_tag(s)
-            wrd_pos = [w + '\t' + map_treebankTags_to_wn(pos) for w, pos in s_pos]
+            wrd_pos = [self.wnl.lemmatize(w) + '\t' + map_treebankTags_to_wn(pos) for w, pos in s_pos]
             emb_sentence = []
             for w in wrd_pos:
                 pos = w.split('\t')[1]
