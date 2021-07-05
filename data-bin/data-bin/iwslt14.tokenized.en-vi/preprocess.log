@@ -1,0 +1,14 @@
+Namespace(align_suffix=None, alignfile=None, all_gather_list_size=16384, azureml_logging=False, bf16=False, bpe=None, cpu=False, criterion='cross_entropy', dataset_impl='mmap', destdir='data-bin/iwslt14.tokenized.en-vi', empty_cache_freq=0, fp16=False, fp16_init_scale=128, fp16_no_flatten_grads=False, fp16_scale_tolerance=0.0, fp16_scale_window=None, joined_dictionary=False, log_format=None, log_interval=100, lr_scheduler='fixed', memory_efficient_bf16=False, memory_efficient_fp16=False, min_loss_scale=0.0001, model_parallel_size=1, no_progress_bar=False, nwordssrc=-1, nwordstgt=-1, only_source=False, optimizer=None, padding_factor=8, plasma_path='/tmp/plasma', profile=False, quantization_config_path=None, reset_logging=False, scoring='bleu', seed=1, source_lang='en', srcdict=None, suppress_crashes=False, target_lang='vi', task='translation', tensorboard_logdir=None, testpref='/content/drive/MyDrive/data/iwslt15.tokenized.en-vi/test', tgtdict=None, threshold_loss_scale=None, thresholdsrc=0, thresholdtgt=0, tokenizer=None, tpu=False, trainpref='/content/drive/MyDrive/data/iwslt15.tokenized.en-vi/train', use_plasma_view=False, user_dir=None, validpref='/content/drive/MyDrive/data/iwslt15.tokenized.en-vi/valid', wandb_project=None, workers=20)
+[en] Dictionary: 47672 types
+[en] /content/drive/MyDrive/data/iwslt15.tokenized.en-vi/train.en: 133098 sents, 3055674 tokens, 0.0% replaced by <unk>
+[en] Dictionary: 47672 types
+[en] /content/drive/MyDrive/data/iwslt15.tokenized.en-vi/valid.en: 1553 sents, 31974 tokens, 0.829% replaced by <unk>
+[en] Dictionary: 47672 types
+[en] /content/drive/MyDrive/data/iwslt15.tokenized.en-vi/test.en: 1268 sents, 29927 tokens, 0.942% replaced by <unk>
+[vi] Dictionary: 22288 types
+[vi] /content/drive/MyDrive/data/iwslt15.tokenized.en-vi/train.vi: 133098 sents, 3468706 tokens, 0.0% replaced by <unk>
+[vi] Dictionary: 22288 types
+[vi] /content/drive/MyDrive/data/iwslt15.tokenized.en-vi/valid.vi: 1553 sents, 36381 tokens, 0.429% replaced by <unk>
+[vi] Dictionary: 22288 types
+[vi] /content/drive/MyDrive/data/iwslt15.tokenized.en-vi/test.vi: 1268 sents, 35401 tokens, 0.486% replaced by <unk>
+Wrote preprocessed data to data-bin/iwslt14.tokenized.en-vi
