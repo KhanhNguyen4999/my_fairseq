@@ -946,7 +946,7 @@ def lstm_khanh_khoa_wordnet_en_vi(args):
     args.cluster_address = getattr(args, "cluster_address", '/content/drive/MyDrive/output/cluster/800n_80a_160v_160r')
     base_architecture(args)
 
-@register_model_architecture("lstm", "lstm_wordnet_cluster_50")
+@register_model_architecture("lstm", "lstm_wordnet_cluster")
 def lstm_khanh_khoa_wordnet_en_vi(args):
     args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 512)
     args.encoder_bidirectional = getattr(args, "encoder_bidirectional", True)
